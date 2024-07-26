@@ -422,6 +422,20 @@ class NonlinearToPWL(Transformation):
             points in order to partition the function domain.""",
         ),
     )
+    CONFIG.declare(
+        'min_additive_decomposition_dimension',
+        ConfigValue(
+            default=1,
+            domain=PositiveInt,
+            description="The minimum dimension of functions that will be additively decomposed.",
+            doc="""
+            Specifies the minimum dimension of a function that the transformation should
+            attempt to additively decompose. If a nonlinear function dimension exceeds
+            'min_additive_decomposition_dimension' the transformation will additively decompose
+            If a the dimension of an expression is less than the "min_additive_decomposition_dimension"
+            then, it will not be additively decomposed"""
+        ),
+    )
     def __init__(self):
         super(Transformation).__init__()
         self._handlers = {
@@ -589,10 +603,20 @@ class NonlinearToPWL(Transformation):
         if not self._needs_approximating(obj, approximate_quadratic):
             return
         
+        # Note sure if this is the best way to do it. Probably a smarter way but this 
+        # was the fastest I could think of
+        expr_vars_ad = list(identify_variables(obj))
+        dim_ad = len(expr_vars_ad)
+
+        if dim_ad <= config.min_additive_decomposition_dimension:
+            additively_decompose = False
+        else:
+            additively_decompose = config.additively_decompose
+        
         # Additively decompose obj and work on the pieces
         pwl_func = 0
         for k, expr in enumerate(_additively_decompose_expr(obj) if
-                                 config.additively_decompose else (obj,)):
+                                 additively_decompose else (obj,)):
             # First check is this is a good idea
             expr_vars = list(identify_variables(expr, include_fixed=False))
             orig_values = ComponentMap((v, v.value) for v in expr_vars)
