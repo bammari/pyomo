@@ -113,6 +113,9 @@ def get_points_lmt_uniform_sample(bounds, n, func, seed=42):
 def get_points_lmt(points, bounds, func, seed):
     x_list = np.array(points)
     y_list = []
+
+    n_points = len(x_list)
+
     for point in points:
         y_list.append(func(*point))
     # ESJ: Do we really need the sklearn dependency to get LinearRegression??
@@ -121,13 +124,13 @@ def get_points_lmt(points, bounds, func, seed):
         criterion='mse',
         max_bins=120,
         min_samples_leaf=4,
-        max_depth=5,
+        max_depth=int(np.log2(n_points/4)),   # Want the tree to grow with increasing points but not get too large.
     )
     regr.fit(x_list, y_list)
 
     leaves, splits, ths = parse_linear_tree_regressor(regr, bounds)
 
-    # This was originally part of the LMT_Model_component and used to calculate
+    # This was originally part of the LMT_Model_component and used to
     # avg_leaves for the output data. TODO: get this back
     # self.total_leaves += len(leaves)
 
@@ -223,7 +226,7 @@ def parse_linear_tree_regressor(linear_tree_regressor, bounds):
     for node in splits.values():
         left_child_node = node['children'][0]  # find its left child
         right_child_node = node['children'][1]  # find its right child
-        # create the list to save leaves
+        # create the list to save leavesc v
         node['left_leaves'], node['right_leaves'] = [], []
         if left_child_node in leaves:  # if left child is a leaf node
             node['left_leaves'].append(left_child_node)
@@ -609,14 +612,14 @@ class NonlinearToPWL(Transformation):
         dim_ad = len(expr_vars_ad)
 
         if dim_ad <= config.min_additive_decomposition_dimension:
-            additively_decompose = False
+            additively_decompose_bool = False
         else:
-            additively_decompose = config.additively_decompose
+            additively_decompose_bool = config.additively_decompose
         
         # Additively decompose obj and work on the pieces
         pwl_func = 0
         for k, expr in enumerate(_additively_decompose_expr(obj) if
-                                 additively_decompose else (obj,)):
+                                 additively_decompose_bool else (obj,)):
             # First check is this is a good idea
             expr_vars = list(identify_variables(expr, include_fixed=False))
             orig_values = ComponentMap((v, v.value) for v in expr_vars)
