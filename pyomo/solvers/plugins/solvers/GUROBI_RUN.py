@@ -123,6 +123,7 @@ def gurobi_run(model_file, warmstart_file, soln_file, mipgap, options, suffixes)
     # calling model.getVars() or model.getConstrs().
     # Apparently it gets reset by those methods.
     wall_time = model.getAttr(GRB.Attr.Runtime)
+    nodes_explored = model.getAttr(GRB.Attr.NodeCount)
 
     solver_status = model.getAttr(GRB.Attr.Status)
     solution_status = None
@@ -302,6 +303,7 @@ def gurobi_run(model_file, warmstart_file, soln_file, mipgap, options, suffixes)
     solnfile.write('return_code: %s\n' % return_code)
     solnfile.write('message: %s\n' % message)
     solnfile.write('wall_time: %s\n' % str(wall_time))
+    solnfile.write('nodes_explored: %s\n' % str(nodes_explored))
     solnfile.write('termination_condition: %s\n' % term_cond)
     solnfile.write('termination_message: %s\n' % message)
 
