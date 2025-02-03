@@ -52,6 +52,12 @@ from pyomo.network import Port
 from pyomo.repn.quadratic import QuadraticRepnVisitor
 from pyomo.repn.util import ExprType
 
+from pyomo.contrib.piecewise.triangulations import (
+    get_unordered_j1_triangulation,
+    get_ordered_j1_triangulation,
+    Triangulation,
+)
+
 
 lineartree, lineartree_available = attempt_import('lineartree')
 sklearn_lm, sklearn_available = attempt_import('sklearn.linear_model')
