@@ -16,6 +16,12 @@ from pyomo.common.collections import ComponentMap, ComponentSet
 from pyomo.common.config import ConfigDict, ConfigValue
 from pyomo.common.gc_manager import PauseGC
 from pyomo.common.modeling import unique_component_name
+from joblib import Parallel, delayed
+from multiprocessing import Pool
+
+from pyomo.common.timing import TicTocTimer
+timer = TicTocTimer()
+import pprint as pp
 
 from pyomo.core import (
     Any,
@@ -41,6 +47,7 @@ from pyomo.core import (
 from pyomo.core.base import Reference, TransformationFactory
 import pyomo.core.expr as EXPR
 from pyomo.core.util import target_list
+import pyomo.environ
 
 from pyomo.gdp import Disjunct, Disjunction, GDP_Error
 from pyomo.gdp.plugins.bigm_mixin import (
@@ -323,13 +330,18 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
             )
 
         Ms = arg_Ms
+        print(len(list(itertools.product(active_disjuncts, active_disjuncts))))
+        # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)), sort_dicts=False)
         if not self._config.only_mbigm_bound_constraints:
+            timer.tic()
             Ms = transBlock.calculated_missing_m_values = (
-                self._calculate_missing_M_values(
+                self._calculate_missing_M_values_parallel(
                     active_disjuncts, arg_Ms, transBlock, transformed_constraints
                 )
             )
-
+            timer.toc('Time to calculate M vals')
+            pp.pprint(Ms, sort_dicts=False)
+        
         # Now we can deactivate the constraints we deferred, so that we don't
         # re-transform them
         for cons in transformed_constraints:
@@ -658,6 +670,101 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
             blk.parent_block().del_component(blk)
 
         return arg_Ms
+
+    def _calculate_missing_M_values_parallel(
+        self, active_disjuncts, arg_Ms, transBlock, transformed_constraints
+    ):
+        scratch_blocks = {}
+        all_vars = list(self._get_all_var_objects(active_disjuncts))
+
+        def parallel_helper(disjunct, other_disjunct, all_vars, scratch_blocks):
+            temp_Ms = {}
+            if disjunct is other_disjunct:
+                return
+            elif id(other_disjunct) in scratch_blocks:
+                scratch = scratch_blocks[id(other_disjunct)]
+            else:
+                scratch = scratch_blocks[id(other_disjunct)] = Block()
+                other_disjunct.add_component(
+                    unique_component_name(other_disjunct, "scratch"), scratch
+                )
+                scratch.obj = Objective(expr=0)  # placeholder, but I want to
+                # take the name before I add a
+                # bunch of random reference
+                # objects.
+
+                # If the writers don't assume Vars are declared on the Block
+                # being solved, we won't need this!
+                for v in all_vars:
+                    ref = Reference(v)
+                    scratch.add_component(unique_component_name(scratch, v.name), ref)
+                
+            for constraint in disjunct.component_data_objects(
+                Constraint,
+                active=True,
+                descend_into=Block,
+                sort=SortComponents.deterministic,
+            ):
+                if constraint in transformed_constraints:
+                    continue
+                # First check args
+                if (constraint, other_disjunct) in arg_Ms:
+                    (lower_M, upper_M) = _convert_M_to_tuple(
+                        arg_Ms[constraint, other_disjunct], constraint, other_disjunct
+                    )
+                    self.used_args[constraint, other_disjunct] = (lower_M, upper_M)
+                else:
+                    (lower_M, upper_M) = (None, None)
+                unsuccessful_solve_msg = (
+                    "Unsuccessful solve to calculate M value to "
+                    "relax constraint '%s' on Disjunct '%s' when "
+                    "Disjunct '%s' is selected."
+                    % (constraint.name, disjunct.name, other_disjunct.name)
+                )
+                if constraint.lower is not None and lower_M is None:
+                    # last resort: calculate
+                    if lower_M is None:
+                        scratch.obj.expr = constraint.body - constraint.lower
+                        scratch.obj.sense = minimize
+                        lower_M = self._solve_disjunct_for_M(
+                            other_disjunct,
+                            scratch,
+                            unsuccessful_solve_msg,
+                            active_disjuncts,
+                        )
+                if constraint.upper is not None and upper_M is None:
+                    # last resort: calculate
+                    if upper_M is None:
+                        scratch.obj.expr = constraint.body - constraint.upper
+                        scratch.obj.sense = maximize
+                        upper_M = self._solve_disjunct_for_M(
+                            other_disjunct,
+                            scratch,
+                            unsuccessful_solve_msg,
+                            active_disjuncts,
+                        )
+                temp_Ms[constraint, other_disjunct] = (lower_M, upper_M)
+                transBlock._mbm_values[constraint, other_disjunct] = (lower_M, upper_M)
+                arg_Ms[constraint, other_disjunct] = (lower_M, upper_M)
+            return temp_Ms
+
+        tasks = list(itertools.product(active_disjuncts, active_disjuncts))
+        results = Parallel(n_jobs=8)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
+
+        new_results = {}
+        for i in results:
+            if i is not None:
+                new_results.update(i)
+        
+        # new_results_keys = list(new_results.keys())
+        # for i, key in enumerate(tasks):
+        #     new_results[key] = new_results[new_results_keys[i]]
+        #     del new_results[new_results_keys[i]]
+        
+        for blk in scratch_blocks.values():
+            blk.parent_block().del_component(blk)
+        
+        return new_results
 
     def _solve_disjunct_for_M(
         self, other_disjunct, scratch_block, unsuccessful_solve_msg, active_disjuncts
