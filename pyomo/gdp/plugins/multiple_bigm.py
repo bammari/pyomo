@@ -750,7 +750,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
             return temp_Ms
 
         tasks = list(itertools.product(active_disjuncts, active_disjuncts))
-        results = Parallel(n_jobs=1)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
+        results = Parallel(n_jobs=8)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
 
         new_results = {}
         for i in results:
