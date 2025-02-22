@@ -330,7 +330,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
             )
 
         Ms = arg_Ms
-        print(len(list(itertools.product(active_disjuncts, active_disjuncts))))
+        # print(len(list(itertools.product(active_disjuncts, active_disjuncts))))
         # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)), sort_dicts=False)
         if not self._config.only_mbigm_bound_constraints:
             timer.tic()
@@ -340,7 +340,8 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
                 )
             )
             timer.toc('Time to calculate M vals')
-            pp.pprint(Ms, sort_dicts=False)
+            # pp.pprint(Ms, sort_dicts=False)
+            # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)))
         
         # Now we can deactivate the constraints we deferred, so that we don't
         # re-transform them
@@ -744,27 +745,84 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
                             active_disjuncts,
                         )
                 temp_Ms[constraint, other_disjunct] = (lower_M, upper_M)
-                transBlock._mbm_values[constraint, other_disjunct] = (lower_M, upper_M)
-                arg_Ms[constraint, other_disjunct] = (lower_M, upper_M)
+                # transBlock._mbm_values[constraint, other_disjunct] = (lower_M, upper_M)
+                # arg_Ms[constraint, other_disjunct] = (lower_M, upper_M)
             return temp_Ms
 
         tasks = list(itertools.product(active_disjuncts, active_disjuncts))
-        results = Parallel(n_jobs=8)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
+        results = Parallel(n_jobs=1)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
 
         new_results = {}
         for i in results:
             if i is not None:
                 new_results.update(i)
         
-        # new_results_keys = list(new_results.keys())
-        # for i, key in enumerate(tasks):
-        #     new_results[key] = new_results[new_results_keys[i]]
-        #     del new_results[new_results_keys[i]]
+        for disjunct, other_disjunct in itertools.product(
+            active_disjuncts, active_disjuncts
+        ):
+            if disjunct is other_disjunct:
+                continue
+            elif id(other_disjunct) in scratch_blocks:
+                scratch = scratch_blocks[id(other_disjunct)]
+            else:
+                scratch = scratch_blocks[id(other_disjunct)] = Block()
+                other_disjunct.add_component(
+                    unique_component_name(other_disjunct, "scratch"), scratch
+                )
+                scratch.obj = Objective(expr=0)  # placeholder, but I want to
+                # take the name before I add a
+                # bunch of random reference
+                # objects.
+
+                # If the writers don't assume Vars are declared on the Block
+                # being solved, we won't need this!
+                for v in all_vars:
+                    ref = Reference(v)
+                    scratch.add_component(unique_component_name(scratch, v.name), ref)
+
+            for constraint in disjunct.component_data_objects(
+                Constraint,
+                active=True,
+                descend_into=Block,
+                sort=SortComponents.deterministic,
+            ):
+                if constraint in transformed_constraints:
+                    continue
+                # First check args
+                if (constraint, other_disjunct) in arg_Ms:
+                    (lower_M, upper_M) = _convert_M_to_tuple(
+                        arg_Ms[constraint, other_disjunct], constraint, other_disjunct
+                    )
+                    self.used_args[constraint, other_disjunct] = (lower_M, upper_M)
+                else:
+                    (lower_M, upper_M) = (None, None)
+                unsuccessful_solve_msg = (
+                    "Unsuccessful solve to calculate M value to "
+                    "relax constraint '%s' on Disjunct '%s' when "
+                    "Disjunct '%s' is selected."
+                    % (constraint.name, disjunct.name, other_disjunct.name)
+                )
+                if constraint.lower is not None and lower_M is None:
+                    # last resort: calculate
+                    if lower_M is None:
+                        _ = 1
+                if constraint.upper is not None and upper_M is None:
+                    # last resort: calculate
+                    if upper_M is None:
+                        _ = 1
+                arg_Ms[constraint, other_disjunct] = 0
+                # transBlock._mbm_values[constraint, other_disjunct] = (lower_M, upper_M)
         
+        for correct_key, wrong_key in zip(list(arg_Ms.keys()), list(new_results.keys())):
+            arg_Ms[correct_key] = new_results[wrong_key]
+            constraint = correct_key[0]
+            other_disjunct = correct_key[1]
+            transBlock._mbm_values[constraint, other_disjunct] = new_results[wrong_key]
+
         for blk in scratch_blocks.values():
             blk.parent_block().del_component(blk)
         
-        return new_results
+        return arg_Ms
 
     def _solve_disjunct_for_M(
         self, other_disjunct, scratch_block, unsuccessful_solve_msg, active_disjuncts
