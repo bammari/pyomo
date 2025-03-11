@@ -140,6 +140,14 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
         ),
     )
     CONFIG.declare(
+        'n_jobs',
+        ConfigValue(
+            default=None,
+            description="Integer with number of jobs to use for parallel "
+            "calculation of MBM values",
+        ),
+    )
+    CONFIG.declare(
         'bigM',
         ConfigValue(
             default=None,
@@ -334,11 +342,19 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
         # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)), sort_dicts=False)
         if not self._config.only_mbigm_bound_constraints:
             timer.tic()
-            Ms = transBlock.calculated_missing_m_values = (
-                self._calculate_missing_M_values_parallel(
-                    active_disjuncts, arg_Ms, transBlock, transformed_constraints
+            n_jobs = self._config.n_jobs
+            if n_jobs is None:
+                Ms = transBlock.calculated_missing_m_values = (
+                    self._calculate_missing_M_values(
+                        active_disjuncts, arg_Ms, transBlock, transformed_constraints
+                    )
                 )
-            )
+            else:
+                Ms = transBlock.calculated_missing_m_values = (
+                    self._calculate_missing_M_values_parallel(
+                        active_disjuncts, arg_Ms, transBlock, transformed_constraints, n_jobs=n_jobs
+                    )
+                )
             timer.toc('Time to calculate M vals')
             # pp.pprint(Ms, sort_dicts=False)
             # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)))
@@ -673,7 +689,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
         return arg_Ms
 
     def _calculate_missing_M_values_parallel(
-        self, active_disjuncts, arg_Ms, transBlock, transformed_constraints
+        self, active_disjuncts, arg_Ms, transBlock, transformed_constraints, n_jobs=1
     ):
         scratch_blocks = {}
         all_vars = list(self._get_all_var_objects(active_disjuncts))
@@ -751,7 +767,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
 
         tasks = list(itertools.product(active_disjuncts, active_disjuncts))
         from tqdm import tqdm
-        results = Parallel(n_jobs=6)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tqdm(tasks))
+        results = Parallel(n_jobs=n_jobs)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
 
         new_results = {}
         for i in results:
