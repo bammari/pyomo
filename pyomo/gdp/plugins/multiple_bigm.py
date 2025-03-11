@@ -338,10 +338,8 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
             )
 
         Ms = arg_Ms
-        # print('Number of LPs to solve: ', len(list(itertools.product(active_disjuncts, active_disjuncts))))
-        # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)), sort_dicts=False)
         if not self._config.only_mbigm_bound_constraints:
-            timer.tic()
+            # timer.tic()
             n_jobs = self._config.n_jobs
             if n_jobs is None:
                 Ms = transBlock.calculated_missing_m_values = (
@@ -355,9 +353,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
                         active_disjuncts, arg_Ms, transBlock, transformed_constraints, n_jobs=n_jobs
                     )
                 )
-            timer.toc('Time to calculate M vals')
-            # pp.pprint(Ms, sort_dicts=False)
-            # pp.pprint(list(itertools.product(active_disjuncts, active_disjuncts)))
+            # timer.toc('Time to calculate M vals')
         
         # Now we can deactivate the constraints we deferred, so that we don't
         # re-transform them
@@ -691,9 +687,19 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
     def _calculate_missing_M_values_parallel(
         self, active_disjuncts, arg_Ms, transBlock, transformed_constraints, n_jobs=1
     ):
+        """This function calculates the bigM values but in parallel
+
+        Keyword Arguments:
+            n_jobs -- Number of processes to use (default: {1})
+
+        Returns:
+            Multiple Big M values dict
+        """
         scratch_blocks = {}
         all_vars = list(self._get_all_var_objects(active_disjuncts))
 
+        # Instead of a for-loop, we create a function that will take in a task list.
+        # This task list is the itertools product of (active_disjuncts, active_disjuncts) 
         def parallel_helper(disjunct, other_disjunct, all_vars, scratch_blocks):
             temp_Ms = {}
             if disjunct is other_disjunct:
@@ -761,19 +767,28 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
                             active_disjuncts,
                         )
                 temp_Ms[constraint, other_disjunct] = (lower_M, upper_M)
-                # transBlock._mbm_values[constraint, other_disjunct] = (lower_M, upper_M)
-                # arg_Ms[constraint, other_disjunct] = (lower_M, upper_M)
+            
             return temp_Ms
-
+        
+        # Create the task list
         tasks = list(itertools.product(active_disjuncts, active_disjuncts))
         from tqdm import tqdm
         results = Parallel(n_jobs=n_jobs)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
 
+        # Clean up the temp dictionary to match the required arg_M dictionary from
+        # the _calculate_missing_M_values function
         new_results = {}
         for i in results:
             if i is not None:
                 new_results.update(i)
         
+        # OK SOO
+        # When using joblib, the process creates copies of the disjuncts in a different 
+        # memory location. These copies are stored as keys in the new_results dictionary.
+        # However, line 411 in this script later references the 
+        # original active_disjunct memory location. So you run into
+        # a key error. This loop extracts the keys from the _calculate_missing_M_values 
+        # function (without solving) to create a mapping.
         for disjunct, other_disjunct in itertools.product(
             active_disjuncts, active_disjuncts
         ):
@@ -830,6 +845,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
                 arg_Ms[constraint, other_disjunct] = 0
                 # transBlock._mbm_values[constraint, other_disjunct] = (lower_M, upper_M)
         
+        # Now that we have the keys from the original dictionary, we just update and return.
         for correct_key, wrong_key in zip(list(arg_Ms.keys()), list(new_results.keys())):
             arg_Ms[correct_key] = new_results[wrong_key]
             constraint = correct_key[0]
