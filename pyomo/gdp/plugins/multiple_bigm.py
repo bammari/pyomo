@@ -773,7 +773,6 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
         # Create the task list
         tasks = list(itertools.product(active_disjuncts, active_disjuncts))
         from tqdm import tqdm
-        import dill as pickle
         results = Parallel(n_jobs=n_jobs, backend='loky')(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tqdm(tasks))
 
         # Clean up the temp dictionary to match the required arg_M dictionary from
