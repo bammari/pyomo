@@ -339,7 +339,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
 
         Ms = arg_Ms
         if not self._config.only_mbigm_bound_constraints:
-            # timer.tic()
+            timer.tic()
             n_jobs = self._config.n_jobs
             if n_jobs is None:
                 Ms = transBlock.calculated_missing_m_values = (
@@ -353,7 +353,7 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
                         active_disjuncts, arg_Ms, transBlock, transformed_constraints, n_jobs=n_jobs
                     )
                 )
-            # timer.toc('Time to calculate M vals')
+            timer.toc('Time to calculate M vals')
         
         # Now we can deactivate the constraints we deferred, so that we don't
         # re-transform them
@@ -773,7 +773,8 @@ class MultipleBigMTransformation(GDP_to_MIP_Transformation, _BigM_MixIn):
         # Create the task list
         tasks = list(itertools.product(active_disjuncts, active_disjuncts))
         from tqdm import tqdm
-        results = Parallel(n_jobs=n_jobs)(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tasks)
+        import dill as pickle
+        results = Parallel(n_jobs=n_jobs, backend='loky')(delayed(parallel_helper)(tsk[0], tsk[1], all_vars, scratch_blocks) for tsk in tqdm(tasks))
 
         # Clean up the temp dictionary to match the required arg_M dictionary from
         # the _calculate_missing_M_values function
