@@ -124,6 +124,7 @@ def gurobi_run(model_file, warmstart_file, mipgap, options, suffixes):
     # calling model.getVars() or model.getConstrs().
     # Apparently it gets reset by those methods.
     wall_time = model.getAttr(GRB.Attr.Runtime)
+    nodes_explored = model.getAttr(GRB.Attr.NodeCount)
 
     solver_status = model.getAttr(GRB.Attr.Status)
     solution_status = None
@@ -295,6 +296,7 @@ def gurobi_run(model_file, warmstart_file, mipgap, options, suffixes):
     solver['wall_time'] = wall_time
     solver['termination_condition'] = term_cond
     solver['termination_message'] = message
+    solver['nodes_explored'] = nodes_explored
 
     is_discrete = False
     if model.getAttr(GRB.Attr.IsMIP):
